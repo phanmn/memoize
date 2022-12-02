@@ -195,11 +195,14 @@ defmodule Memoize.CacheTest do
              Memoize.Cache.get_or_run(
                :key,
                fn -> cache_with_call_count(:key, 100) end,
-               back_end: :persistent_term
+               back_end: :persistent_term,
+               expires_in: 1000
              )
 
+    assert {:key, {:completed, 10, _}} = :persistent_term.get(:key)
+
     # # wait to expire the cache
-    Process.sleep(1200)
+    Process.sleep(1500)
 
     assert 20 ==
              Memoize.Cache.get_or_run(
@@ -207,6 +210,8 @@ defmodule Memoize.CacheTest do
                fn -> cache_with_call_count(:key, 100) end,
                back_end: :persistent_term
              )
+
+    assert {:key, {:completed, 20, _}} = :persistent_term.get(:key)
   end
 
   @tag cache: "default"
@@ -315,6 +320,9 @@ defmodule Memoize.CacheTest do
                back_end: :persistent_term
              )
 
+    assert {:key1, {:completed, 10, _}} = :persistent_term.get(:key1)
+    assert {:key3, {:completed, 10, _}} = :persistent_term.get(:key3)
+
     # wait to expire the cache
     Process.sleep(120)
     # insert new value
@@ -326,8 +334,12 @@ defmodule Memoize.CacheTest do
                back_end: :persistent_term
              )
 
+    assert {:key2, {:completed, 10, _}} = :persistent_term.get(:key2)
+
     # :key1's value is collected
     assert 2 == Memoize.Cache.garbage_collect()
+
+    assert [] = :persistent_term.get(:key1, [])
 
     assert 20 ==
              Memoize.Cache.get_or_run(
@@ -336,6 +348,8 @@ defmodule Memoize.CacheTest do
                expires_in: 100,
                back_end: :persistent_term
              )
+
+    assert {:key1, {:completed, 20, _}} = :persistent_term.get(:key1)
 
     assert 10 ==
              Memoize.Cache.get_or_run(

@@ -3,6 +3,8 @@ defmodule MemoizeTest do
 
   use Memoize
 
+  require Logger
+
   defmemo foo(x, y) when x == 0 do
     y
   end
@@ -16,13 +18,21 @@ defmodule MemoizeTest do
   end
 
   defmemo foos(x, y), back_end: :persistent_term do
-    Process.sleep(1000)
+    Process.sleep(5000)
     x - y
   end
 
   test "defmemo persistent term foos" do
     assert 27 == foos(30, 3)
     assert 27 == foos(30, 3)
+  end
+
+  test "10 processes calling persistent term foos" do
+    for _ <- [1..10] do
+      spawn(fn ->
+        assert 27 == foos(30, 3)
+      end)
+    end
   end
 
   test "defmemo defines foo" do

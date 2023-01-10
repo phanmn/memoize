@@ -28,11 +28,12 @@ defmodule MemoizeTest do
   end
 
   test "10 processes calling persistent term foos" do
-    for _ <- [1..10] do
+    for _ <- 1..10 do
       spawn(fn ->
-        assert 27 == foos(30, 3)
+        foos(30, 3)
       end)
     end
+    assert 27 == foos(30, 3)
   end
 
   test "defmemo defines foo" do

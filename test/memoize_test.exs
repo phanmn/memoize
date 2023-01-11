@@ -3,8 +3,6 @@ defmodule MemoizeTest do
 
   use Memoize
 
-  require Logger
-
   defmemo foo(x, y) when x == 0 do
     y
   end
@@ -17,12 +15,22 @@ defmodule MemoizeTest do
     y * z
   end
 
-  defmemo barz(x, y) do
-    res = :ets.lookup(Memoize.CacheStrategy.Default, {MemoizeTest, :barz, [x, y]})
+  defmemo barz(x, y, pid) do
+    message =
+      :ets.lookup(Memoize.CacheStrategy.Default, {MemoizeTest, :barz, [x, y, pid]})
+      |> case do
+        [{{MemoizeTest, :barz, [^x, ^y, ^pid]}, {:running, _, _}}] ->
+          :running
+
+        _ ->
+          :completed
+      end
+
+    send(pid, message)
 
     foos(30, 3)
 
-    res
+    x + y
   end
 
   defmemo foos(x, y), back_end: :persistent_term do
@@ -41,6 +49,7 @@ defmodule MemoizeTest do
         foos(30, 3)
       end)
     end
+
     assert 27 == foos(30, 3)
   end
 
@@ -48,10 +57,14 @@ defmodule MemoizeTest do
     pid = self()
 
     spawn(fn ->
-      send(pid, barz(10, 5))
+      barz(10, 5, pid)
     end)
 
-    assert_receive([{{MemoizeTest, :barz, [10, 5]}, {:running, _, _}}], 10000)
+    assert_receive(:running, 5000)
+    Process.sleep(6000)
+
+    assert [{{MemoizeTest, :barz, [10, 5, ^pid]}, {:completed, 15, :infinity}}] =
+             :ets.lookup(Memoize.CacheStrategy.Default, {MemoizeTest, :barz, [10, 5, pid]})
   end
 
   test "defmemo defines foo" do

@@ -28,7 +28,7 @@ defmodule MemoizeTest do
 
     send(pid, message)
 
-    foos(30, 3)
+    foos(x, y)
 
     x + y
   end

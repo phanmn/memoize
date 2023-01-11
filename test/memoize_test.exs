@@ -17,6 +17,14 @@ defmodule MemoizeTest do
     y * z
   end
 
+  defmemo barz(x, y) do
+    res = :ets.lookup(Memoize.CacheStrategy.Default, {MemoizeTest, :barz, [x, y]})
+
+    foos(30, 3)
+
+    res
+  end
+
   defmemo foos(x, y), back_end: :persistent_term do
     Process.sleep(5000)
     x - y
@@ -34,6 +42,16 @@ defmodule MemoizeTest do
       end)
     end
     assert 27 == foos(30, 3)
+  end
+
+  test "persistent_term cache when ets cache is running" do
+    pid = self()
+
+    spawn(fn ->
+      send(pid, barz(10, 5))
+    end)
+
+    assert_receive([{{MemoizeTest, :barz, [10, 5]}, {:running, _, _}}], 10000)
   end
 
   test "defmemo defines foo" do

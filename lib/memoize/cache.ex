@@ -20,17 +20,16 @@ defmodule Memoize.Cache do
     num_deleted == 1
   end
 
-  defp compare_and_swap(key, expected, value, :ets) do
-    num_replaced = :ets.select_replace(tab(key), [{expected, [], [{:const, value}]}])
+  defp compare_and_swap(key, expected, {_, {:completed, _, to_be_expired}} = value, :persistent_term) do
+    :persistent_term.put(key, value)
+
+    num_replaced = :ets.select_replace(tab(key), [{expected, [], [{:const, {key, to_be_expired, :persistent_term}}]}])
+
     num_replaced == 1
   end
 
-  defp compare_and_swap(key, expected, value, :persistent_term) do
-    :persistent_term.put(key, value)
-
-    {_, {:completed, _, to_be_expired}} = value
-
-    num_replaced = :ets.select_replace(tab(key), [{expected, [], [{:const, {key, to_be_expired, :persistent_term}}]}])
+  defp compare_and_swap(key, expected, value, _) do
+    num_replaced = :ets.select_replace(tab(key), [{expected, [], [{:const, value}]}])
     num_replaced == 1
   end
 

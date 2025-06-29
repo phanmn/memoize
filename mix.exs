@@ -2,13 +2,13 @@ defmodule Memoize.Mixfile do
   use Mix.Project
 
   @source_url "https://github.com/melpon/memoize"
-  @version "1.4.1"
+  @version "1.4.3"
 
   def project do
     [
       app: :memoize,
       version: @version,
-      elixir: "~> 1.9",
+      elixir: "~> 1.11",
       description: "A method caching macro for elixir using CAS on ETS",
       build_embedded: Mix.env() == :prod,
       start_permanent: Mix.env() == :prod,

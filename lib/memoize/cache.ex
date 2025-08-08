@@ -154,7 +154,7 @@ defmodule Memoize.Cache do
         max_waiters = if(max_waiters <= 0, do: 1, else: max_waiters)
         waiters = length(waiter_pids)
 
-        if waiters < max_waiters do
+        if waiters < max_waiters || !Process.alive?(runner_pid) do
           waiter_pids = [self() | waiter_pids]
 
           if compare_and_swap(key, expected, {key, {:running, runner_pid, waiter_pids}}, back_end) do

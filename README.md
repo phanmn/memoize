@@ -100,6 +100,45 @@ Memoize.invalidate()
 
 Notice: `Memoize.invalidate/{0-2}`'s complexity is linear. Therefore, it takes a long time if `Memoize` has many cached values.
 
+## Invalidate by Tag
+
+`Memoize.invalidate/{0-3}` only matches on `{module, function, arguments}`. If
+a cached value depends on something else entirely (e.g. a database row), you
+can tag it when it's cached and invalidate everything tagged with that thing
+in one call, without knowing which specific `{module, function, arguments}`
+keys hold it.
+
+Pass `:tags` to `defmemo` — either a static list, or a 2-arity function
+`fn key, result -> tags end` computed from the cache key (`{module, function,
+arguments}`) and the freshly computed result:
+
+```elixir
+defmemo get_user(id), tags: fn _key, user -> [{:user, user.id}] end do
+  Repo.get(User, id)
+end
+
+defmemo list_admins(), tags: [:admins] do
+  Repo.all(from u in User, where: u.role == "admin")
+end
+```
+
+Then, whenever a user changes:
+
+```elixir
+# clears every cached value tagged {:user, 5} — e.g. `get_user(5)`.
+Memoize.invalidate_tag({:user, 5})
+
+# clears every cached value tagged :admins.
+Memoize.invalidate_tag(:admins)
+```
+
+The same `:tags` option works with `Memoize.Cache.get_or_run/3` directly.
+
+The tag index is kept in sync automatically: it's cleaned up not only on
+explicit invalidation, but also when a cache entry expires (`expires_in`) or
+is removed by `garbage_collect/0`, so it never accumulates stale entries on
+its own.
+
 ## Caching Partial Arguments
 
 If you want to cache with partial arguments, use `Memoize.Cache.get_or_run/2` directly.

@@ -22,6 +22,8 @@ defmodule Memoize.Config do
 
     opts = cache_strategy().init(opts)
 
+    Memoize.Tags.init()
+
     :persistent_term.put(:memoize_opts, Map.new(opts))
   end
 

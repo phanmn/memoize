@@ -114,6 +114,7 @@ defmodule Memoize.CacheStrategy.Eviction do
           for {{key, _}, num_deleted} <- stream do
             :ets.select_delete(@ets_tab, [{{key, {:completed, :_, :_}}, [], [true]}])
             :ets.delete(@read_history_tab, key)
+            Memoize.Tags.delete_key(key)
 
             if used_bytes() <= min_threshold() do
               throw({:break, num_deleted})
@@ -144,6 +145,7 @@ defmodule Memoize.CacheStrategy.Eviction do
 
             if now > expired_at do
               invalidate(cache_key)
+              Memoize.Tags.delete_key(cache_key)
               :ets.delete(@expiration_tab, key)
               expired? = expired? || cache_key == read_key
               # next

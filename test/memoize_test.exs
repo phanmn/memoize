@@ -124,6 +124,18 @@ defmodule MemoizeTest do
     assert 2 == nothing_do(1)
   end
 
+  defmemo get_user(id), tags: fn _key, user -> [{:user, user.id}] end do
+    %{id: id, computed_at: make_ref()}
+  end
+
+  test "defmemo with :tags invalidates via Memoize.invalidate_tag/1" do
+    user1 = get_user(1)
+    assert user1 == get_user(1)
+
+    assert 1 == Memoize.invalidate_tag({:user, 1})
+    refute user1 == get_user(1)
+  end
+
   defmemo has_expire(pid), expires_in: 100 do
     send(pid, :ok)
   end

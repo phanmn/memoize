@@ -41,6 +41,7 @@ defmodule Memoize.CacheStrategy.Default do
   def read(key, _value, expired_at) do
     if expired_at != :infinity && System.monotonic_time(:millisecond) > expired_at do
       invalidate(key)
+      Memoize.Tags.delete_key(key)
       :retry
     else
       :ok
@@ -56,12 +57,14 @@ defmodule Memoize.CacheStrategy.Default do
         |> case do
           true ->
             acc + 1
+
           _ ->
             acc
         end
       end)
 
-    persistent_term_keys_ets = :ets.select_delete(@ets_tab, [{{:_, :_, :persistent_term}, [], [true]}])
+    persistent_term_keys_ets =
+      :ets.select_delete(@ets_tab, [{{:_, :_, :persistent_term}, [], [true]}])
 
     :ets.select_delete(@ets_tab, [{{:_, {:completed, :_, :_}}, [], [true]}])
     |> Kernel.+(persistent_terms + persistent_term_keys_ets)
@@ -80,6 +83,7 @@ defmodule Memoize.CacheStrategy.Default do
           |> case do
             true ->
               1
+
             _ ->
               0
           end
@@ -90,17 +94,20 @@ defmodule Memoize.CacheStrategy.Default do
   def garbage_collect() do
     expired_at = System.monotonic_time(:millisecond)
 
-    persistent_terms =
+    persistent_term_keys =
       :ets.select(@ets_tab, [
         {{:"$1", :"$2", :persistent_term},
          [{:andalso, {:"/=", :"$2", :infinity}, {:<, :"$2", {:const, expired_at}}}], [:"$1"]}
       ])
-      |> Enum.reduce(0, fn key, acc ->
+
+    persistent_terms =
+      Enum.reduce(persistent_term_keys, 0, fn key, acc ->
         key
         |> :persistent_term.erase()
         |> case do
           true ->
             acc + 1
+
           _ ->
             acc
         end
@@ -112,10 +119,20 @@ defmodule Memoize.CacheStrategy.Default do
          [{:andalso, {:"/=", :"$1", :infinity}, {:<, :"$1", {:const, expired_at}}}], [true]}
       ])
 
-    :ets.select_delete(@ets_tab, [
-      {{:_, {:completed, :_, :"$1"}},
-       [{:andalso, {:"/=", :"$1", :infinity}, {:<, :"$1", {:const, expired_at}}}], [true]}
-    ])
-    |> Kernel.+(persistent_terms + persistent_term_keys_ets)
+    expired_completed_keys =
+      :ets.select(@ets_tab, [
+        {{:"$2", {:completed, :_, :"$1"}},
+         [{:andalso, {:"/=", :"$1", :infinity}, {:<, :"$1", {:const, expired_at}}}], [:"$2"]}
+      ])
+
+    num_deleted_completed =
+      :ets.select_delete(@ets_tab, [
+        {{:_, {:completed, :_, :"$1"}},
+         [{:andalso, {:"/=", :"$1", :infinity}, {:<, :"$1", {:const, expired_at}}}], [true]}
+      ])
+
+    Enum.each(persistent_term_keys ++ expired_completed_keys, &Memoize.Tags.delete_key/1)
+
+    num_deleted_completed + persistent_terms + persistent_term_keys_ets
   end
 end

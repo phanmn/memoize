@@ -23,6 +23,81 @@ defmodule Memoize.CacheTest do
     assert 10 == Memoize.Cache.get_or_run(:key, fn -> 10 end)
   end
 
+  test "invalidate_tag/1 invalidates every key associated with a tag" do
+    assert 1 == Memoize.Cache.get_or_run({:user, 1}, fn -> 1 end, tags: [{:user, 1}])
+    assert 2 == Memoize.Cache.get_or_run({:user, 2}, fn -> 2 end, tags: [{:user, 2}])
+
+    assert 10 ==
+             Memoize.Cache.get_or_run(:report, fn -> 10 end, tags: [{:user, 1}, {:user, 2}])
+
+    # unrelated key, no tags
+    assert 99 == Memoize.Cache.get_or_run(:other, fn -> 99 end)
+
+    # {:user, 1} and :report are both tagged with {:user, 1}
+    assert 2 == Memoize.Cache.invalidate_tag({:user, 1})
+    assert 0 == Memoize.Cache.invalidate_tag({:user, 1})
+
+    # {:user, 1} and :report were cleared, {:user, 2} and :other are untouched
+    assert :recomputed ==
+             Memoize.Cache.get_or_run({:user, 1}, fn -> :recomputed end, tags: [{:user, 1}])
+
+    assert :recomputed == Memoize.Cache.get_or_run(:report, fn -> :recomputed end)
+    assert 2 == Memoize.Cache.get_or_run({:user, 2}, fn -> :recomputed end, tags: [{:user, 2}])
+    assert 99 == Memoize.Cache.get_or_run(:other, fn -> :recomputed end)
+  end
+
+  test "tags can be derived from the key and the computed result" do
+    tags = fn {_kind, id}, result -> [{:user, id}, {:result, result}] end
+
+    assert 42 == Memoize.Cache.get_or_run({:profile, 7}, fn -> 42 end, tags: tags)
+    assert 1 == Memoize.Cache.invalidate_tag({:result, 42})
+    assert 0 == Memoize.Cache.invalidate_tag({:user, 7})
+  end
+
+  test "invalidate/1 on a specific key also drops its tag associations" do
+    assert 1 == Memoize.Cache.get_or_run(:key, fn -> 1 end, tags: [:mytag])
+    assert 1 == Memoize.Cache.invalidate(:key)
+
+    # the tag no longer points at the invalidated key
+    assert 0 == Memoize.Cache.invalidate_tag(:mytag)
+  end
+
+  @tag cache: "default"
+  test "garbage_collect/0 auto-cleans the tag index for entries it removes" do
+    assert 1 ==
+             Memoize.Cache.get_or_run(:key, fn -> 1 end, tags: [:mytag], expires_in: 50)
+
+    # let it expire, then purge it via garbage_collect/0 without ever calling
+    # invalidate/invalidate_tag ourselves
+    Process.sleep(100)
+    Memoize.garbage_collect()
+
+    # garbage_collect/0 removed the value AND cleaned up its tag
+    # association automatically
+    assert [] == Memoize.Tags.keys_for_tag(:mytag)
+    assert 0 == Memoize.Cache.invalidate_tag(:mytag)
+  end
+
+  @tag cache: "default"
+  test "auto-cleans the tag index when a lazily-expired entry is read" do
+    assert 1 ==
+             Memoize.Cache.get_or_run(:key, fn -> 1 end, tags: [:mytag], expires_in: 50)
+
+    Process.sleep(100)
+
+    # triggers the read-time lazy expiry path (not garbage_collect/0)
+    assert :recomputed == Memoize.Cache.get_or_run(:key, fn -> :recomputed end)
+
+    assert [] == Memoize.Tags.keys_for_tag(:mytag)
+  end
+
+  test "invalidate/0 clears the whole tag index" do
+    assert 1 == Memoize.Cache.get_or_run(:key, fn -> 1 end, tags: [:mytag])
+    assert 1 == Memoize.Cache.invalidate()
+
+    assert 0 == Memoize.Cache.invalidate_tag(:mytag)
+  end
+
   defp cache_single(wait_time, result) do
     case :ets.lookup(@tab, @fun_lock) do
       [{@fun_lock, false}] ->
@@ -500,6 +575,19 @@ defmodule Memoize.CacheTest do
   end
 
   @tag cache: "eviction"
+  test "garbage_collect/0 auto-cleans the tag index for entries it evicts" do
+    opts = Application.fetch_env!(:memoize, Memoize.CacheStrategy.Eviction)
+    min_threshold = Keyword.fetch!(opts, :min_threshold)
+
+    Memoize.Cache.get_or_run(:tagged, fn -> 10 end, tags: [:mytag])
+    eat_memory(min_threshold)
+    Memoize.garbage_collect()
+
+    assert [] == Memoize.Tags.keys_for_tag(:mytag)
+    assert 0 == Memoize.Cache.invalidate_tag(:mytag)
+  end
+
+  @tag cache: "eviction"
   test "if :permanent is specified in get_or_cache's opts, the cached value won't be collected by garbage_collect/0" do
     opts = Application.fetch_env!(:memoize, Memoize.CacheStrategy.Eviction)
     min_threshold = Keyword.fetch!(opts, :min_threshold)
@@ -536,6 +624,22 @@ defmodule Memoize.CacheTest do
     Process.sleep(120)
     assert 20 == Memoize.Cache.get_or_run(:key, fn -> cache_with_call_count(:key, 0) end)
     assert 20 == Memoize.Cache.get_or_run(:key2, fn -> cache_with_call_count(:key2, 0) end)
+  end
+
+  @tag cache: "eviction"
+  test "clear_expired_cache auto-cleans the tag index for entries it expires" do
+    assert 10 ==
+             Memoize.Cache.get_or_run(:key, fn -> cache_with_call_count(:key, 0) end,
+               expires_in: 50,
+               tags: [:mytag]
+             )
+
+    Process.sleep(100)
+
+    # any read triggers Eviction.clear_expired_cache/2, which sweeps :key
+    assert 10 == Memoize.Cache.get_or_run(:key2, fn -> cache_with_call_count(:key2, 0) end)
+
+    assert [] == Memoize.Tags.keys_for_tag(:mytag)
   end
 
   @tag cache: "eviction_2"

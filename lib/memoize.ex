@@ -228,6 +228,21 @@ defmodule Memoize do
     Memoize.Cache.invalidate({module, function, arguments})
   end
 
+  @doc """
+  Invalidates every cached value tagged with `tag` via the `:tags` option of
+  `defmemo`/`Memoize.Cache.get_or_run/3`. Returns the number of cached values
+  removed.
+
+      defmemo get_user(id), tags: fn _key, user -> [{:user, user.id}] end do
+        Repo.get(User, id)
+      end
+
+      Memoize.invalidate_tag({:user, 5})
+  """
+  def invalidate_tag(tag) do
+    Memoize.Cache.invalidate_tag(tag)
+  end
+
   defdelegate garbage_collect(), to: Memoize.Cache
 
   def cache_strategy() do

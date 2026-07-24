@@ -20,10 +20,18 @@ defmodule Memoize.Cache do
     num_deleted == 1
   end
 
-  defp compare_and_swap(key, expected, {_, {:completed, _, to_be_expired}} = value, :persistent_term) do
+  defp compare_and_swap(
+         key,
+         expected,
+         {_, {:completed, _, to_be_expired}} = value,
+         :persistent_term
+       ) do
     :persistent_term.put(key, value)
 
-    num_replaced = :ets.select_replace(tab(key), [{expected, [], [{:const, {key, to_be_expired, :persistent_term}}]}])
+    num_replaced =
+      :ets.select_replace(tab(key), [
+        {expected, [], [{:const, {key, to_be_expired, :persistent_term}}]}
+      ])
 
     num_replaced == 1
   end
@@ -120,6 +128,7 @@ defmodule Memoize.Cache do
           else
             result ->
               context = cache_strategy().cache(key, result, opts)
+              Memoize.Tags.put(key, resolve_tags(opts, key, result))
               waiter_pids = set_result_and_get_waiter_pids(key, result, context, back_end)
 
               Enum.map(waiter_pids, fn pid ->
@@ -170,7 +179,12 @@ defmodule Memoize.Cache do
               {:DOWN, ^ref, :process, ^runner_pid, _reason} ->
                 # in case the running process isn't alive anymore,
                 # it means it crashed and failed to complete
-                compare_and_swap(key, {key, {:running, runner_pid, waiter_pids}}, :nothing, back_end)
+                compare_and_swap(
+                  key,
+                  {key, {:running, runner_pid, waiter_pids}},
+                  :nothing,
+                  back_end
+                )
 
                 Enum.map(waiter_pids, fn pid ->
                   send(pid, {self(), :failed})
@@ -206,6 +220,7 @@ defmodule Memoize.Cache do
       # persistent_term completed
       [{^key, _, :persistent_term}] ->
         {^key, {:completed, value, context}} = :persistent_term.get(key)
+
         case cache_strategy().read(key, value, context) do
           :retry -> do_get_or_run(key, fun, opts, back_end)
           :ok -> value
@@ -214,15 +229,59 @@ defmodule Memoize.Cache do
   end
 
   def invalidate() do
-    cache_strategy().invalidate()
+    result = cache_strategy().invalidate()
+    Memoize.Tags.delete_all()
+    result
   end
 
   def invalidate(key) do
     key = normalize_key(key)
-    cache_strategy().invalidate(key)
+    keys = matching_keys(key)
+    result = cache_strategy().invalidate(key)
+    Enum.each(keys, &Memoize.Tags.delete_key/1)
+    result
+  end
+
+  @doc """
+  Invalidates every cache entry currently associated with `tag` (see the
+  `:tags` option of `get_or_run/3`). Returns the number of cache entries
+  removed.
+  """
+  def invalidate_tag(tag) do
+    keys = Memoize.Tags.keys_for_tag(tag)
+    result = keys |> Enum.map(&invalidate/1) |> Enum.sum()
+
+    # `invalidate/1` only cleans the tag index for keys it still found in the
+    # cache table. Keys that already expired or were garbage collected on
+    # their own never hit that path, so clear their tag associations here
+    # regardless of whether they were still present.
+    Enum.each(keys, &Memoize.Tags.delete_key/1)
+
+    result
   end
 
   def garbage_collect() do
     cache_strategy().garbage_collect()
+  end
+
+  # returns the concrete cache keys currently stored that match `key`
+  # (which may itself be a wildcard pattern such as `{module, :_, :_}`),
+  # so callers can clean up any tag index entries for them.
+  defp matching_keys(key) do
+    clauses = [
+      {{key, :_}, [], [:"$_"]},
+      {{key, :_, :_}, [], [:"$_"]}
+    ]
+
+    :ets.select(tab(key), clauses)
+    |> Enum.map(&elem(&1, 0))
+  end
+
+  defp resolve_tags(opts, key, result) do
+    case Keyword.get(opts, :tags) do
+      nil -> []
+      tags when is_list(tags) -> tags
+      fun when is_function(fun, 2) -> fun.(key, result)
+    end
   end
 end
